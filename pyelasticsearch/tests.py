@@ -6,10 +6,12 @@ import sys
 from datetime import datetime, date
 from decimal import Decimal
 import unittest
-import six
 
 from mock import patch
+from nose import SkipTest
+from nose.tools import eq_, ok_, assert_raises, assert_not_equal
 import requests
+import six
 
 # Test that __all__ is sufficient:
 from pyelasticsearch import *
@@ -33,54 +35,60 @@ class ElasticSearchTestCase(unittest.TestCase):
         except Exception:
             pass
 
-    def assertResultContains(self, result, expected):
+    def assert_result_contains(self, result, expected):
         for (key, value) in expected.items():
-            self.assertEquals(value, result[key])
+            eq_(value, result[key])
 
 
 class IndexingTestCase(ElasticSearchTestCase):
-    def testIndexingWithID(self):
+    def test_indexing_with_id(self):
         result = self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id=1)
-        self.assertResultContains(result, {'_type': 'test-type', '_id': '1', 'ok': True, '_index': 'test-index'})
+        self.assert_result_contains(result, {'_type': 'test-type', '_id': '1', 'ok': True, '_index': 'test-index'})
 
-    def testIndexingWith0ID(self):
+    def test_indexing_with_0_id(self):
         result = self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id=0)
-        self.assertResultContains(result, {'_type': 'test-type', '_id': '0', 'ok': True, '_index': 'test-index'})
+        self.assert_result_contains(result, {'_type': 'test-type', '_id': '0', 'ok': True, '_index': 'test-index'})
 
-    def testQuotedCharsInID(self):
+    def test_quoted_chars_in_id(self):
         result = self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id="""<>?,./`~!@#$%^&*()_+=[]\{{}|:";'""")
-        self.assertResultContains(result, {'_type': 'test-type', '_id': """<>?,./`~!@#$%^&*()_+=[]\{{}|:";'""", 'ok': True, '_index': 'test-index'})
+        self.assert_result_contains(result, {'_type': 'test-type', '_id': """<>?,./`~!@#$%^&*()_+=[]\{{}|:";'""", 'ok': True, '_index': 'test-index'})
 
-    def testIndexingWithoutID(self):
-        result = self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'})
-        self.assertResultContains(result, {'_type': 'test-type', 'ok': True, '_index': 'test-index'})
+    def test_indexing_without_id(self):
+        result = self.conn.index(
+            'test-index', 'test-type', {'name': 'Joe Tester'})
+        self.assert_result_contains(result,
+            {'_type': 'test-type', 'ok': True, '_index': 'test-index'})
         # should have an id of some value assigned.
-        self.assertTrue('_id' in result and result['_id'])
+        ok_('_id' in result and result['_id'])
+        # should not generate the same id twice
+        result2 = self.conn.index(
+            'test-index', 'test-type', {'name': 'Barny Tester'})
+        assert_not_equal(result['_id'], result2['_id'])
 
-    def testExplicitIndexCreate(self):
+    def test_explicit_index_create(self):
         result = self.conn.create_index('test-index')
-        self.assertResultContains(result, {'acknowledged': True, 'ok': True})
+        self.assert_result_contains(result, {'acknowledged': True, 'ok': True})
 
-    def testCloseIndex(self):
+    def test_close_index(self):
         """Make sure a close_index call on an open index reports success."""
         self.conn.create_index('test-index')
         result = self.conn.close_index('test-index')
-        self.assertResultContains(result, {'acknowledged': True, 'ok': True})
+        self.assert_result_contains(result, {'acknowledged': True, 'ok': True})
 
-    def testOpenIndex(self):
+    def test_open_index(self):
         """Make sure an open_index call on a closed index reports success."""
         self.conn.create_index('test-index')
         self.conn.close_index('test-index')
         result = self.conn.open_index('test-index')
-        self.assertResultContains(result, {'acknowledged': True, 'ok': True})
+        self.assert_result_contains(result, {'acknowledged': True, 'ok': True})
 
-    def testGetSettings(self):
+    def test_get_settings(self):
         self.conn.create_index('test-index')
         result = self.conn.get_settings('test-index')
-        self.assertTrue('test-index'in result)
-        self.assertTrue('settings' in result['test-index'])
+        ok_('test-index' in result)
+        ok_('settings' in result['test-index'])
 
-    def testUpdateSettings(self):
+    def test_update_settings(self):
         """Make sure ``update_settings()`` sends the expected request."""
         with patch.object(self.conn, 'send_request') as send_request:
             self.conn.update_settings(['test-index', 'toast-index'],
@@ -91,7 +99,7 @@ class IndexingTestCase(ElasticSearchTestCase):
             body={'index': {'number_of_replicas': 2}},
             query_params={})
 
-    def testHealth(self):
+    def test_health(self):
         with patch.object(self.conn, 'send_request') as send_request:
             self.conn.health(['test-index', 'toast-index'],
                              wait_for_status='yellow',
@@ -107,38 +115,38 @@ class IndexingTestCase(ElasticSearchTestCase):
         send_request.assert_called_once_with(
             'GET', ['_cluster', 'health', ''], query_params={})
 
-    def testClusterState(self):
+    def test_cluster_state(self):
         result = self.conn.cluster_state(filter_routing_table=True)
-        self.assertTrue('nodes' in result)
+        ok_('nodes' in result)
         self.assertFalse('routing_table' in result)
 
-    def testDeleteByID(self):
+    def test_delete_by_id(self):
         self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id=1)
         self.conn.refresh(['test-index'])
         result = self.conn.delete('test-index', 'test-type', 1)
-        self.assertResultContains(result, {'_type': 'test-type', '_id': '1', 'ok': True, '_index': 'test-index'})
+        self.assert_result_contains(result, {'_type': 'test-type', '_id': '1', 'ok': True, '_index': 'test-index'})
 
-    def testDeleteBy0ID(self):
+    def test_delete_by_0_id(self):
         self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id=0)
         self.conn.refresh(['test-index'])
         result = self.conn.delete('test-index', 'test-type', 0)
-        self.assertResultContains(result, {'_type': 'test-type', '_id': '0', 'ok': True, '_index': 'test-index'})
+        self.assert_result_contains(result, {'_type': 'test-type', '_id': '0', 'ok': True, '_index': 'test-index'})
 
-    def testDeleteByIdWithoutId(self):
+    def test_delete_by_id_without_id(self):
         self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id=1)
         self.conn.refresh(['test-index'])
-        self.assertRaises(
+        assert_raises(
             ValueError, self.conn.delete, 'test-index', 'test-type', '')
-        self.assertRaises(
+        assert_raises(
             ValueError, self.conn.delete, 'test-index', 'test-type', None)
 
-    def testDeleteByDocType(self):
+    def test_delete_by_doc_type(self):
         self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id=1)
         self.conn.refresh(["test-index"])
         result = self.conn.delete_all("test-index", "test-type")
-        self.assertResultContains(result, {'ok': True})
+        self.assert_result_contains(result, {'ok': True})
 
-    def testDeleteByQuery(self):
+    def test_delete_by_query(self):
         self.conn.index('test-index', 'test-type', {'name': 'Joe Tester'}, id=1)
         self.conn.index('test-index', 'test-type', {'name': 'Bill Baloney'}, id=2)
         self.conn.index('test-index', 'test-type', {'name': 'Horace Humdinger'}, id=3)
@@ -146,101 +154,101 @@ class IndexingTestCase(ElasticSearchTestCase):
 
         self.conn.refresh(['test-index'])
         result = self.conn.count('*:*', index=['test-index'])
-        self.assertResultContains(result, {'count': 3})
+        self.assert_result_contains(result, {'count': 3})
 
         result = self.conn.delete_by_query('test-index', 'test-type', {'query_string': {'query': 'name:joe OR name:bill'}})
-        self.assertResultContains(result, {'ok': True})
+        self.assert_result_contains(result, {'ok': True})
 
         self.conn.refresh(['test-index'])
         result = self.conn.count('*:*', index=['test-index'])
-        self.assertResultContains(result, {'count': 1})
+        self.assert_result_contains(result, {'count': 1})
 
-    def testDeleteIndex(self):
+    def test_delete_index(self):
         self.conn.create_index('another-index')
         result = self.conn.delete_index('another-index')
-        self.assertResultContains(result, {'acknowledged': True, 'ok': True})
+        self.assert_result_contains(result, {'acknowledged': True, 'ok': True})
 
-    def testDeleteNonexistentIndex(self):
+    def test_delete_nonexistent_index(self):
         """
         Deleting a nonexistent index should raise ElasticHttpNotFoundError.
         """
-        self.assertRaises(ElasticHttpNotFoundError,
+        assert_raises(ElasticHttpNotFoundError,
                           self.conn.delete_index,
                           'nonexistent-index')
 
-    def testCannotCreateExistingIndex(self):
+    def test_cannot_create_existing_index(self):
         self.conn.create_index('another-index')
-        self.assertRaises(
+        assert_raises(
             IndexAlreadyExistsError, self.conn.create_index, 'another-index')
         self.conn.delete_index('another-index')
-        self.assertRaises(ElasticHttpError, self.conn.delete_index, 'another-index')
+        assert_raises(ElasticHttpError, self.conn.delete_index, 'another-index')
 
-    def testPutMapping(self):
+    def test_put_mapping(self):
         result = self.conn.create_index('test-index')
         result = self.conn.put_mapping('test-index', 'test-type', {'test-type': {'properties': {'name': {'type': 'string', 'store': 'yes'}}}})
-        self.assertResultContains(result, {'acknowledged': True, 'ok': True})
+        self.assert_result_contains(result, {'acknowledged': True, 'ok': True})
 
-    def testGetMapping(self):
+    def test_get_mapping(self):
         result = self.conn.create_index('test-index')
         mapping = {'test-type': {'properties': {'name': {'type': 'string', 'store': 'yes'}}}}
         self.conn.put_mapping('test-index', 'test-type', mapping)
 
         result = self.conn.get_mapping(index=['test-index'], doc_type=['test-type'])
-        self.assertEqual(result, mapping)
+        eq_(result, mapping)
 
-    def testIndexStatus(self):
+    def test_index_status(self):
         self.conn.create_index('another-index')
         result = self.conn.status('another-index')
         self.conn.delete_index('another-index')
-        self.assertTrue('indices' in result)
-        self.assertResultContains(result, {'ok': True})
+        ok_('indices' in result)
+        self.assert_result_contains(result, {'ok': True})
 
-    def testIndexFlush(self):
+    def test_index_flush(self):
         self.conn.create_index('another-index')
         result = self.conn.flush('another-index')
         self.conn.delete_index('another-index')
-        self.assertResultContains(result, {'ok': True})
+        self.assert_result_contains(result, {'ok': True})
 
-    def testIndexRefresh(self):
+    def test_index_refresh(self):
         self.conn.create_index('another-index')
         result = self.conn.refresh('another-index')
         self.conn.delete_index('another-index')
-        self.assertResultContains(result, {'ok': True})
+        self.assert_result_contains(result, {'ok': True})
 
-    def testIndexOptimize(self):
+    def test_index_optimize(self):
         self.conn.create_index('another-index')
         result = self.conn.optimize('another-index')
         self.conn.delete_index('another-index')
-        self.assertResultContains(result, {'ok': True})
+        self.assert_result_contains(result, {'ok': True})
 
-    def testBulkIndex(self):
+    def test_bulk_index(self):
         # Try counting the docs in a nonexistent index:
-        self.assertRaises(ElasticHttpError, self.conn.count, '*:*', index=['test-index'])
+        assert_raises(ElasticHttpError, self.conn.count, '*:*', index=['test-index'])
 
         docs = [
             {'name': 'Joe Tester'},
             {'name': 'Bill Baloney', 'id': 303},
         ]
         result = self.conn.bulk_index('test-index', 'test-type', docs)
-        self.assertEqual(len(result['items']), 2)
-        self.assertEqual(result['items'][0]['create']['ok'], True)
-        self.assertEqual(result['items'][1]['index']['ok'], True)
-        self.assertEqual(result['items'][1]['index']['_id'], '303')
+        eq_(len(result['items']), 2)
+        eq_(result['items'][0]['create']['ok'], True)
+        eq_(result['items'][1]['index']['ok'], True)
+        eq_(result['items'][1]['index']['_id'], '303')
         self.conn.refresh()
-        self.assertEqual(self.conn.count('*:*',
+        eq_(self.conn.count('*:*',
                                          index=['test-index'])['count'], 2)
 
-    def testErrorHandling(self):
+    def test_error_handling(self):
         # Wrong port.
         conn = ElasticSearch('http://localhost:1009200/')
-        self.assertRaises(ConnectionError, conn.count, '*:*')
+        assert_raises(ConnectionError, conn.count, '*:*')
 
         # Test invalid JSON.
         resp = requests.Response()
         resp._content = six.b('{"busted" "json" "that": ["is] " wrong')
-        self.assertRaises(InvalidJsonResponseError, conn._decode_response, resp)
+        assert_raises(InvalidJsonResponseError, conn._decode_response, resp)
 
-    def testUpdate(self):
+    def test_update(self):
         """Smoke-test the ``update()`` API."""
         SCRIPT = 'ctx._source.thing += count'
         with patch.object(self.conn, 'send_request') as send_request:
@@ -257,7 +265,7 @@ class IndexingTestCase(ElasticSearchTestCase):
                   'lang': 'python'},
                   query_params={})
 
-    def testAliasIndex(self):
+    def test_alias_index(self):
         self.conn.create_index('test-index')
         settings = {
             "actions": [
@@ -265,19 +273,19 @@ class IndexingTestCase(ElasticSearchTestCase):
             ]
         }
         result = self.conn.update_aliases(settings)
-        self.assertResultContains(result, {'acknowledged': True, 'ok': True})
+        self.assert_result_contains(result, {'acknowledged': True, 'ok': True})
 
-    def testAliasNonexistentIndex(self):
+    def test_alias_nonexistent_index(self):
         settings = {
             "actions": [
                 {"add": {"index": "test1", "alias": "alias1"}}
             ]
         }
-        self.assertRaises(ElasticHttpNotFoundError,
+        assert_raises(ElasticHttpNotFoundError,
                           self.conn.update_aliases,
                           settings)
 
-    def testListAliases(self):
+    def test_list_aliases(self):
         self.conn.create_index('test-index')
         settings = {
             "actions": [
@@ -286,12 +294,12 @@ class IndexingTestCase(ElasticSearchTestCase):
         }
         self.conn.update_aliases(settings)
         result = self.conn.aliases('test-index')
-        self.assertEqual(result, {u'test-index': {u'aliases': {u'test-alias': {}}}})
+        eq_(result, {u'test-index': {u'aliases': {u'test-alias': {}}}})
 
     def test_empty_path_segments(self):
         """'' segments passed to ``_join_path`` should be omitted."""
         # Call _join_path like get_mapping might if called with no params:
-        self.assertEqual(self.conn._join_path(['', '', '_mapping']),
+        eq_(self.conn._join_path(['', '', '_mapping']),
                          '/_mapping')
 
     def test_0_path_segments(self):
@@ -300,7 +308,7 @@ class IndexingTestCase(ElasticSearchTestCase):
 
         This is so doc IDs that are 0 work.
         """
-        self.assertEqual(self.conn._join_path([0, '_mapping']),
+        eq_(self.conn._join_path([0, '_mapping']),
                          '/0/_mapping')
 
 
@@ -311,31 +319,31 @@ class SearchTestCase(ElasticSearchTestCase):
         self.conn.index('test-index', 'test-type', {'name': 'Bill Baloney'}, id=2)
         self.conn.refresh(['test-index'])
 
-    def testGetByID(self):
+    def test_get_by_id(self):
         result = self.conn.get('test-index', 'test-type', 1)
-        self.assertResultContains(result, {'_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index'})
+        self.assert_result_contains(result, {'_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index'})
 
-    def testMultiGetSimple(self):
+    def test_multi_get_simple(self):
         result = self.conn.multi_get([1], index='test-index', doc_type='test-type')
-        self.assertResultContains(result, {'docs': [{'_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index', "_version": 1, "exists": True}]})
+        self.assert_result_contains(result, {'docs': [{'_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index', "_version": 1, "exists": True}]})
 
-    def testMultiGetMix(self):
+    def test_multi_get_mix(self):
         result = self.conn.multi_get([{'_type': 'test-type', '_id': 1}], index='test-index')
-        self.assertResultContains(result, {'docs': [{'_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index', "_version": 1, "exists": True}]})
+        self.assert_result_contains(result, {'docs': [{'_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index', "_version": 1, "exists": True}]})
 
-    def testMultiGetCustom(self):
+    def test_multi_get_custom(self):
         result = self.conn.multi_get([{'_type': 'test-type', '_id': 1, 'fields': ['name'], '_index': 'test-index'}])
-        self.assertResultContains(result, {'docs': [{'_type': 'test-type', '_id': '1', 'fields': {'name': 'Joe Tester'}, '_index': 'test-index', "_version": 1, "exists": True}]})
+        self.assert_result_contains(result, {'docs': [{'_type': 'test-type', '_id': '1', 'fields': {'name': 'Joe Tester'}, '_index': 'test-index', "_version": 1, "exists": True}]})
 
-    def testGetCountBySearch(self):
+    def test_get_count_by_search(self):
         result = self.conn.count('name:joe', index='test-index')
-        self.assertResultContains(result, {'count': 1})
+        self.assert_result_contains(result, {'count': 1})
 
-    def testSearchByField(self):
+    def test_search_by_field(self):
         result = self.conn.search('name:joe', index='test-index')
-        self.assertResultContains(result, {'hits': {'hits': [{'_score': 0.19178301, '_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index'}], 'total': 1, 'max_score': 0.19178301}})
+        self.assert_result_contains(result, {'hits': {'hits': [{'_score': 0.19178301, '_type': 'test-type', '_id': '1', '_source': {'name': 'Joe Tester'}, '_index': 'test-index'}], 'total': 1, 'max_score': 0.19178301}})
 
-    def testSearchStringPaginated(self):
+    def test_search_string_paginated(self):
         with patch.object(self.conn, 'send_request') as send_request:
             self.conn.search('*:*', index='test-index', es_from=1, size=1)
 
@@ -345,7 +353,7 @@ class SearchTestCase(ElasticSearchTestCase):
             '',
             query_params={'q': '*:*', 'from': 1, 'size': 1})
 
-    def testSearchByDSL(self):
+    def test_search_by_dsl(self):
         self.conn.index('test-index', 'test-type', {'name': 'AgeJoe Tester', 'age': 25}, id=1)
         self.conn.index('test-index', 'test-type', {'name': 'AgeBill Baloney', 'age': 35}, id=2)
         self.conn.refresh(['test-index'])
@@ -367,15 +375,15 @@ class SearchTestCase(ElasticSearchTestCase):
                 },
             }
         result = self.conn.search(query, index=['test-index'], doc_type=['test-type'])
-        self.assertTrue(result.get('hits').get('hits').__len__() > 0, str(result))
+        ok_(result.get('hits').get('hits').__len__() > 0, str(result))
 
-    def testMLT(self):
+    def test_mlt(self):
         self.conn.index('test-index', 'test-type', {'name': 'Joe Test'}, id=3)
         self.conn.refresh(['test-index'])
         result = self.conn.more_like_this('test-index', 'test-type', 1, ['name'], min_term_freq=1, min_doc_freq=1)
-        self.assertResultContains(result, {'hits': {'hits': [{'_score': 0.19178301, '_type': 'test-type', '_id': '3', '_source': {'name': 'Joe Test'}, '_index': 'test-index'}], 'total': 1, 'max_score': 0.19178301}})
+        self.assert_result_contains(result, {'hits': {'hits': [{'_score': 0.19178301, '_type': 'test-type', '_id': '3', '_source': {'name': 'Joe Test'}, '_index': 'test-index'}], 'total': 1, 'max_score': 0.19178301}})
 
-    def testMLTWithBody(self):
+    def test_mlt_with_body(self):
         self.conn.index('test-index', 'test-type', {'name': 'Joe Test', 'age': 22}, id=2)
         self.conn.index('test-index', 'test-type', {'name': 'Joe Justin', 'age': 16}, id=3)
         self.conn.refresh(['test-index'])
@@ -394,10 +402,10 @@ class SearchTestCase(ElasticSearchTestCase):
                 }
             }
         result = self.conn.more_like_this('test-index', 'test-type', 1, ['name'], body=body, min_term_freq=1, min_doc_freq=1)
-        self.assertResultContains(result,
+        self.assert_result_contains(result,
                 {'hits': {'hits': [{'_score': 0.19178301, '_type': 'test-type', '_id': '3', '_source': {'age': 16, 'name': 'Joe Justin'}, '_index': 'test-index'}], 'total': 1, 'max_score': 0.19178301}})
 
-    def testMLTFields(self):
+    def test_mlt_fields(self):
         self.conn.index('test-index', 'test-type', {'name': 'Angus', 'sport': 'football'}, id=3)
         self.conn.index('test-index', 'test-type', {'name': 'Cam', 'sport': 'football'}, id=4)
         self.conn.index('test-index', 'test-type', {'name': 'Sophia', 'sport': 'baseball'}, id=5)
@@ -405,7 +413,7 @@ class SearchTestCase(ElasticSearchTestCase):
         self.conn.refresh(['test-index'])
 
         result = self.conn.more_like_this('test-index', 'test-type', 3, ['sport'], min_term_freq=1, min_doc_freq=1)
-        self.assertResultContains(result,
+        self.assert_result_contains(result,
                 {u'hits': {u'hits': [{u'_score': 0.30685282, u'_type': u'test-type', u'_id': u'4', u'_source': {u'sport': u'football', u'name': u'Cam'}, u'_index': u'test-index'}], u'total': 1, u'max_score': 0.30685282}})
 
 
@@ -427,7 +435,7 @@ class DangerousOperationTests(ElasticSearchTestCase):
         """
         ``delete_index()`` should raise ValueError if no indexes are given.
         """
-        self.assertRaises(ValueError, self.conn.delete_index, [])
+        assert_raises(ValueError, self.conn.delete_index, [])
 
     def test_delete_all_indexes(self):
         """Make sure ``delete_all_indexes()`` sends the right request."""
@@ -440,7 +448,7 @@ class DangerousOperationTests(ElasticSearchTestCase):
         ``update_settings()`` should refuse to update *all* indexes when none
         are given.
         """
-        self.assertRaises(ValueError, self.conn.update_settings, [], {'b': 4})
+        assert_raises(ValueError, self.conn.update_settings, [], {'b': 4})
 
     def update_all_settings(self):
         """Make sure ``update_all_settings()`` sends the right request."""
@@ -480,15 +488,15 @@ class DowntimePoolingTests(unittest.TestCase):
             conn.get('test-index', 'test-type', 7)
 
         # Assert that one server was tried and then the other.
-        self.assertEqual(session_get.call_count, 2)
+        eq_(session_get.call_count, 2)
         calls = session_get.call_args_list
         down_server = calls[0][0]
-        self.assertNotEqual(calls[1][0], down_server)
+        assert_not_equal(calls[1][0], down_server)
 
         # Assert there's one item in the live pool and one in the dead.
         # That oughta cover a fair amount.
-        self.assertEqual(len(conn.servers.live), 1)
-        self.assertEqual(len(conn.servers.dead), 1)
+        eq_(len(conn.servers.live), 1)
+        eq_(len(conn.servers.dead), 1)
 
     def test_death_and_rebirth(self):
         """
@@ -514,8 +522,8 @@ class DowntimePoolingTests(unittest.TestCase):
                     pass
 
             # Make sure the pools are as we expect:
-            self.assertEquals(len(conn.servers.dead), 2)
-            self.assertEquals(len(conn.servers.live), 0)
+            eq_(len(conn.servers.dead), 2)
+            eq_(len(conn.servers.live), 0)
 
             # And this should use a dead server, though the request will still
             # time out:
@@ -533,8 +541,8 @@ class DowntimePoolingTests(unittest.TestCase):
             conn.get('test-index', 'test-type', 7)
 
             # Then that server should have come back to life:
-            self.assertEquals(len(conn.servers.dead), 1)
-            self.assertEquals(len(conn.servers.live), 1)
+            eq_(len(conn.servers.dead), 1)
+            eq_(len(conn.servers.live), 1)
 
 
 class KwargsForQueryTests(unittest.TestCase):
@@ -543,19 +551,19 @@ class KwargsForQueryTests(unittest.TestCase):
     def test_to_query(self):
         """Test the thing that translates objects to query string text."""
         to_query = ElasticSearch._to_query
-        self.assertEqual(to_query(4), '4')
-        self.assertEqual(to_query(4.5), '4.5')
-        self.assertEqual(to_query(True), 'true')
-        self.assertEqual(to_query(('4', 'hi', 'thomas')), '4,hi,thomas')
-        self.assertEqual(to_query(datetime(2000, 1, 2, 12, 34, 56)),
+        eq_(to_query(4), '4')
+        eq_(to_query(4.5), '4.5')
+        eq_(to_query(True), 'true')
+        eq_(to_query(('4', 'hi', 'thomas')), '4,hi,thomas')
+        eq_(to_query(datetime(2000, 1, 2, 12, 34, 56)),
                          '2000-01-02T12:34:56')
-        self.assertEqual(to_query(date(2000, 1, 2)),
+        eq_(to_query(date(2000, 1, 2)),
                          '2000-01-02T00:00:00')
-        self.assertRaises(TypeError, to_query, object())
+        assert_raises(TypeError, to_query, object())
 
         # do not use unittest.skipIf because of python 2.6
         if not six.PY3:
-            self.assertEqual(to_query(long(4)), '4')
+            eq_(to_query(long(4)), '4')
 
 
     def test_es_kwargs(self):
@@ -572,9 +580,9 @@ class KwargsForQueryTests(unittest.TestCase):
         """
             return doc, query_params, other_kwarg
 
-        self.assertEqual(index(3, refresh=True, es_timeout=7, other_kwarg=1),
+        eq_(index(3, refresh=True, es_timeout=7, other_kwarg=1),
                          (3, {'refresh': True, 'timeout': 7}, 1))
-        self.assertEqual(index.__name__, 'index')
+        eq_(index.__name__, 'index')
 
     def test_index(self):
         """Integration-test ``index()`` with some decorator-handled arg."""
@@ -598,12 +606,12 @@ class KwargsForQueryTests(unittest.TestCase):
 
         # Make sure all the query string params got into the URL:
         url = put.call_args[0][0]
-        self.assertTrue(
+        ok_(
             url.startswith('http://example.com:9200/some_index/some_type/3?'))
-        self.assertTrue('routing=boogie' in url)
-        self.assertTrue('snorkfest=true' in url)
-        self.assertTrue('borkfest=gerbils%3Agreat' in url)
-        self.assertTrue('es_' not in url)  # We stripped the "es_" prefixes.
+        ok_('routing=boogie' in url)
+        ok_('snorkfest=true' in url)
+        ok_('borkfest=gerbils%3Agreat' in url)
+        ok_('es_' not in url)  # We stripped the "es_" prefixes.
 
     def test_arg_cross_refs_with_trailing(self):
         """
@@ -622,9 +630,12 @@ class KwargsForQueryTests(unittest.TestCase):
         It's neat.
         """
 
+        if some_method.__doc__ is None:
+            raise SkipTest("This test doesn't work under python -OO.")
+
         # Make sure it adds (only) the undocumented args and preserves anything
         # that comes after the args block:
-        self.assertEqual(
+        eq_(
             some_method.__doc__,
             """
         Do stuff.
@@ -649,7 +660,10 @@ class KwargsForQueryTests(unittest.TestCase):
         :arg degook: Whether to remove the gook
         """
 
-        self.assertEqual(
+        if some_method.__doc__ is None:
+            raise SkipTest("This test doesn't work under python -OO.")
+
+        eq_(
             some_method.__doc__,
             """
         Do stuff.
@@ -667,40 +681,40 @@ class JsonTests(ElasticSearchTestCase):
         up with quotes around them, which would suggest to ES to represent them
         as strings if inferring a mapping."""
         ones = '1.111111111111111111'
-        self.assertEqual(self.conn._encode_json({'hi': Decimal(ones)}),
+        eq_(self.conn._encode_json({'hi': Decimal(ones)}),
                          '{"hi": %s}' % ones)
 
     def test_set_encoding(self):
         """Make sure encountering a set doesn't raise a circular reference
         error."""
-        self.assertEqual(self.conn._encode_json({'hi': set([1])}),
+        eq_(self.conn._encode_json({'hi': set([1])}),
                          '{"hi": [1]}')
 
     def test_tuple_encoding(self):
         """Make sure tuples encode as lists."""
-        self.assertEqual(self.conn._encode_json({'hi': (1, 2, 3)}),
+        eq_(self.conn._encode_json({'hi': (1, 2, 3)}),
                          '{"hi": [1, 2, 3]}')
 
     def test_unhandled_encoding(self):
         """Make sure we raise a TypeError when encoding an unsupported type."""
-        self.assertRaises(TypeError, self.conn._encode_json, object())
+        assert_raises(TypeError, self.conn._encode_json, object())
 
     def test_encoding(self):
         """Test encoding a zillion other types."""
-        self.assertEqual(self.conn._encode_json('abc'), u'"abc"')
-        self.assertEqual(self.conn._encode_json(u'☃'), r'"\u2603"')
-        self.assertEqual(self.conn._encode_json(123), '123')
-        self.assertEqual(self.conn._encode_json(12.25), '12.25')
-        self.assertEqual(self.conn._encode_json(True), 'true')
-        self.assertEqual(self.conn._encode_json(False), 'false')
-        self.assertEqual(self.conn._encode_json(
+        eq_(self.conn._encode_json('abc'), u'"abc"')
+        eq_(self.conn._encode_json(u'☃'), r'"\u2603"')
+        eq_(self.conn._encode_json(123), '123')
+        eq_(self.conn._encode_json(12.25), '12.25')
+        eq_(self.conn._encode_json(True), 'true')
+        eq_(self.conn._encode_json(False), 'false')
+        eq_(self.conn._encode_json(
             date(2011, 12, 30)),
             '"2011-12-30T00:00:00"')
-        self.assertEqual(self.conn._encode_json(
+        eq_(self.conn._encode_json(
             datetime(2011, 12, 30, 11, 59, 32)),
             '"2011-12-30T11:59:32"')
-        self.assertEqual(self.conn._encode_json([1, 2, 3]), '[1, 2, 3]')
-        self.assertEqual(self.conn._encode_json({'a': 1}), '{"a": 1}')
+        eq_(self.conn._encode_json([1, 2, 3]), '[1, 2, 3]')
+        eq_(self.conn._encode_json({'a': 1}), '{"a": 1}')
 
 
 if __name__ == '__main__':

@@ -2,6 +2,13 @@ import codecs
 import re
 from os.path import join, dirname
 
+# Prevent spurious errors during `python setup.py test`, a la
+# http://www.eby-sarna.com/pipermail/peak/2010-May/003357.html:
+try:
+    import multiprocessing
+except ImportError:
+    pass
+
 from setuptools import setup, find_packages
 
 
@@ -49,14 +56,14 @@ setup(
     requires=[  # Needed?
         'six',
         'requests(>=1.0,<2.0)',
-        'simplejson(>=2.1.0)'
+        'simplejson(>=2.1.0)',
     ],
     install_requires=[
-        'six',
         'requests>=1.0,<2.0',
-        'simplejson>=2.1.0'
+        'simplejson>=2.1.0',
+        'six'
     ],
-    tests_require=['mock'],
-    test_suite='pyelasticsearch.tests',
+    tests_require=['mock', 'nose>=1.2.1'],
+    test_suite='nose.collector',
     url='http://github.com/rhec/pyelasticsearch'
 )

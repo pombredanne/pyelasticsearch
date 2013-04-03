@@ -41,27 +41,27 @@ def _add_es_kwarg_docs(params, method):
         return '\n        :arg %s: See the ES docs.' % p
 
     doc = method.__doc__
+    if doc is not None:  # It's none under python -OO.
+        # Handle the case where there are no :arg declarations to key off:
+        if '\n        :arg' not in doc:
+            first_param, params = params[0], params[1:]
+            doc = doc.replace('\n        (Insert es_kwargs here.)',
+                              docs_for_kwarg(first_param))
 
-    # Handle the case where there are no :arg declarations to key off:
-    if '\n        :arg' not in doc:
-        first_param, params = params[0], params[1:]
-        doc = doc.replace('\n        (Insert es_kwargs here.)',
-                          docs_for_kwarg(first_param))
+        for p in params:
+            if ('\n        :arg %s: ' % p) not in doc:
+                # Find the last documented arg so we can put our generated docs
+                # after it. No need to explicitly compile this; the regex cache
+                # should serve.
+                insertion_point = re.search(
+                    r'        :arg (.*?)(?=\n+        (?:$|[^: ]))',
+                    doc,
+                    re.MULTILINE | re.DOTALL).end()
 
-    for p in params:
-        if ('\n        :arg %s: ' % p) not in doc:
-            # Find the last documented arg so we can put our generated docs
-            # after it. No need to explicitly compile this; the regex cache
-            # should serve.
-            insertion_point = re.search(
-                r'        :arg (.*?)(?=\n+        (?:$|[^: ]))',
-                doc,
-                re.MULTILINE | re.DOTALL).end()
-
-            doc = ''.join([doc[:insertion_point],
-                           docs_for_kwarg(p),
-                           doc[insertion_point:]])
-    method.__doc__ = doc
+                doc = ''.join([doc[:insertion_point],
+                               docs_for_kwarg(p),
+                               doc[insertion_point:]])
+        method.__doc__ = doc
 
 
 def es_kwargs(*args_to_convert):
@@ -162,9 +162,9 @@ class ElasticSearch(object):
                         " query string." % obj)
 
     def _join_path(self, path_components):
-        """Smush together the (string) path components, ignoring empty ones."""
+        """Smush together the path components, omitting '' and None ones."""
         path = '/'.join(quote_plus(str(p), '') for p in path_components if
-                        len(str(p)))
+                        p is not None and p != '')
 
         if not path.startswith('/'):
             path = '/' + path
@@ -211,8 +211,8 @@ class ElasticSearch(object):
             server_url, was_dead = self.servers.get()
             url = server_url + path
             self.logger.debug(
-                "Making a request equivalent to this: curl -X%s '%s' -d '%s'" %
-                (method, url, request_body))
+                "Making a request equivalent to this: curl -X%s '%s' -d '%s'",
+                method, url, request_body)
 
             try:
                 resp = req_method(
@@ -412,17 +412,28 @@ class ElasticSearch(object):
         """
         Delete typed JSON documents from a specific index based on query.
 
-        :arg index: The name of the index from which to delete
-        :arg doc_type: The type of document to delete
-        :arg query: A dict of query DSL selecting the documents to delete
+        :arg index: An index or iterable thereof from which to delete
+        :arg doc_type: The type of document or iterable thereof to delete
+        :arg query: A dictionary that will convert to ES's query DSL or a
+            string that will serve as a textual query to be passed as the ``q``
+            query string parameter. (Passing the ``q`` kwarg yourself is
+            deprecated.)
 
         See `ES's delete-by-query API`_ for more detail.
 
         .. _`ES's delete-by-query API`:
             http://www.elasticsearch.org/guide/reference/api/delete-by-query.html
         """
-        return self.send_request('DELETE', [index, doc_type, '_query'], query,
-                                 query_params=query_params)
+        if isinstance(query, string_types) and 'q' not in query_params:
+            query_params['q'] = query
+            body = ''
+        else:
+            body = query
+        return self.send_request(
+            'DELETE',
+            [self._concat(index), self._concat(doc_type), '_query'],
+            body,
+            query_params=query_params)
 
     @es_kwargs('realtime', 'fields', 'routing', 'preference', 'refresh')
     def get(self, index, doc_type, id, query_params=None):
