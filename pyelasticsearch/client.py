@@ -6,7 +6,8 @@ from operator import itemgetter
 from functools import wraps
 from logging import getLogger
 import re
-from six import iterkeys, string_types, integer_types, iteritems, PY3
+from six import (iterkeys, binary_type, text_type, string_types, integer_types,
+                 iteritems, PY3)
 from six.moves import xrange
 
 try:
@@ -141,9 +142,11 @@ class ElasticSearch(object):
             items = [items]
         return ','.join(i for i in items if i != '_all')
 
-    @classmethod
-    def _to_query(cls, obj):
-        """Convert a native-Python object to a query-string representation."""
+    def _to_query(self, obj):
+        """
+        Convert a native-Python object to a unicode or bytestring
+        representation suitable for a query string.
+        """
         # Quick and dirty thus far
         if isinstance(obj, string_types):
             return obj
@@ -154,16 +157,29 @@ class ElasticSearch(object):
         if isinstance(obj, float):
             return repr(obj)  # str loses precision.
         if isinstance(obj, (list, tuple)):
-            return ','.join(cls._to_query(o) for o in obj)
+            return ','.join(self._to_query(o) for o in obj)
         iso = _iso_datetime(obj)
         if iso:
             return iso
         raise TypeError("_to_query() doesn't know how to represent %r in an ES"
-                        " query string." % obj)
+                        ' query string.' % obj)
+
+    def _utf8(self, thing):
+        """Convert any arbitrary ``thing`` to a utf-8 bytestring."""
+        if isinstance(thing, binary_type):
+            return thing
+        if not isinstance(thing, text_type):
+            thing = text_type(thing)
+        return thing.encode('utf-8')
 
     def _join_path(self, path_components):
-        """Smush together the path components, omitting '' and None ones."""
-        path = '/'.join(quote_plus(str(p), '') for p in path_components if
+        """
+        Smush together the path components, omitting '' and None ones.
+
+        Unicodes get encoded to strings via utf-8. Incoming strings are assumed
+        to be utf-8-encoded already.
+        """
+        path = '/'.join(quote_plus(self._utf8(p), '') for p in path_components if
                         p is not None and p != '')
 
         if not path.startswith('/'):
@@ -198,8 +214,9 @@ class ElasticSearch(object):
         path = self._join_path(path_components)
         if query_params:
             path = '?'.join(
-                [path, urlencode(dict((k, self._to_query(v)) for k, v in
-                                      iteritems(query_params)))])
+                [path,
+                 urlencode(dict((k, self._utf8(self._to_query(v))) for k, v in
+                                iteritems(query_params)))])
 
         request_body = self._encode_json(body) if encode_body else body
         req_method = getattr(self.session, method.lower())
@@ -268,7 +285,7 @@ class ElasticSearch(object):
 
     @es_kwargs('routing', 'parent', 'timestamp', 'ttl', 'percolate',
                'consistency', 'replication', 'refresh', 'timeout', 'fields')
-    def index(self, index, doc_type, doc, id=None, force_insert=False,
+    def index(self, index, doc_type, doc, id=None, only_if_absent=False,
               query_params=None):
         """
         Put a typed JSON document into a specific index to make it searchable.
@@ -278,7 +295,7 @@ class ElasticSearch(object):
         :arg doc: A Python mapping object, convertible to JSON, representing
             the document
         :arg id: The ID to give the document. Leave blank to make one up.
-        :arg force_insert: If ``True`` and a document of the given ID already
+        :arg only_if_absent: If ``True`` and a document of the given ID already
             exists, fail rather than updating it.
         :arg routing: A value hashed to determine which shard this indexing
             request is routed to
@@ -317,7 +334,7 @@ class ElasticSearch(object):
 
         # TODO: Support version along with associated "preference" and
         # "version_type" params.
-        if force_insert:
+        if only_if_absent:
             query_params['op_type'] = 'create'
 
         return self.send_request('POST' if id is None else 'PUT',
@@ -327,7 +344,7 @@ class ElasticSearch(object):
 
     @es_kwargs('consistency', 'refresh')
     def bulk_index(self, index, doc_type, docs, id_field='id',
-                   query_params=None):
+                   parent_field='_parent', query_params=None):
         """
         Index a list of documents as efficiently as possible.
 
@@ -336,6 +353,8 @@ class ElasticSearch(object):
         :arg docs: An iterable of Python mapping objects, convertible to JSON,
             representing documents to index
         :arg id_field: The field of each document that holds its ID
+        :arg parent_field: The field of each document that holds its parent ID,
+            if any. Removed from document before indexing. 
 
         See `ES's bulk API`_ for more detail.
 
@@ -350,15 +369,17 @@ class ElasticSearch(object):
         for doc in docs:
             action = {'index': {'_index': index, '_type': doc_type}}
 
-            if doc.get(id_field):
+            if doc.get(id_field) is not None:
                 action['index']['_id'] = doc[id_field]
+
+            if doc.get(parent_field) is not None:
+                action['index']['_parent'] = doc.pop(parent_field)
 
             body_bits.append(self._encode_json(action))
             body_bits.append(self._encode_json(doc))
 
         # Need the trailing newline.
         body = '\n'.join(body_bits) + '\n'
-        query_params['op_type'] = 'create'  # TODO: Why?
         return self.send_request('POST',
                                  ['_bulk'],
                                  body,
@@ -939,6 +960,28 @@ class ElasticSearch(object):
         """
         return self.send_request(
             'GET', ['_cluster', 'state'], query_params=query_params)
+
+    @es_kwargs()
+    def percolate(self, index, doc_type, doc, query_params=None):
+        """
+        Run a JSON document through the registered percolator queries, and
+        return which ones match.
+
+        :arg index: The name of the index to which the document pretends to
+            belong
+        :arg doc_type: The type the document should be treated as if it has
+        :arg doc: A Python mapping object, convertible to JSON, representing
+            the document
+
+        Use :meth:`index()` to register percolators. See `ES's percolate API`_
+        for more detail.
+
+        .. _`ES's percolate API`:
+            http://www.elasticsearch.org/guide/reference/api/percolate/
+        """
+        return self.send_request('GET',
+                                 [index, doc_type, '_percolate'], 
+                                 doc, query_params=query_params)
 
 
 class JsonEncoder(json.JSONEncoder):

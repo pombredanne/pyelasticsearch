@@ -1,23 +1,48 @@
 Changelog
 =========
 
-v0.5 (unreleased)
+v0.6 (unreleased)
+-----------------
+
+.. warning::
+
+  Note the change in behavior of ``bulk_index()`` in this release. This change
+  probably brings it more in line with your expectations. But double check,
+  since it now overwrites existing docs in situations where it didn't before.
+
+  Also, we made a backward-incompatible spelling change to a little-used
+  ``index()`` kwarg.
+
+* ``bulk_index()`` now overwrites any existing doc of the same ID and doctype.
+  Before, it did nothing at all if a document already existed, probably much to
+  your surprise. (We removed the ``'op_type': 'create'`` pair, whose intentions
+  were always mysterious.) (Gavin Carothers)
+* Rename the ``force_insert`` kwarg of ``index()`` to ``only_if_absent``. The
+  old name implied the opposite of what it actually did. (Gavin Carothers)
+
+
+v0.5 (2013-04-20)
 -----------------
 
 * Support multiple indices and doctypes in ``delete_by_query()``. Accept both
   string and JSON queries in the ``query`` arg, just as ``search()`` does.
   Passing the ``q`` arg explicitly is now deprecated.
-* Add ``multi_get`` support.
+* Add ``multi_get``.
+* Add ``percolate``. Thanks, Adam Georgiou and Joseph Rose!
+* Add ability to specify the parent document in ``bulk_index()``. Thanks, Gavin
+  Carothers!
 * Remove the internal, undocumented ``from_python`` method. django-haystack
   users will need to upgrade to a newer version that avoids using it.
 * Refactor JSON encoding machinery. Now it's clearer how to customize it: just
   plug your custom JSON encoder class into ``ElasticSearch.json_encoder``.
 * Don't crash under ``python -OO``.
+* Support non-ASCII URL path components (like Unicode document IDs) and query
+  string param values.
 * Switch to the nose testrunner.
 
 
 v0.4.1 (2013-03-25)
------------------
+-------------------
 
 * Fix a bug introduced in 0.4 wherein "None" was accidentally sent to ES when
   an ID wasn't passed to ``index()``.

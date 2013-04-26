@@ -28,7 +28,7 @@ so it'll be hard to miss.
 
     .. automethod:: aliases(index=None[, other kwargs listed below])
 
-    .. automethod:: bulk_index(index, doc_type, docs, id_field='id'[, other kwargs listed below])
+    .. automethod:: bulk_index(index, doc_type, docs, id_field='id', parent_field='_parent'[, other kwargs listed below])
 
     .. automethod:: close_index(index)
 
@@ -69,6 +69,8 @@ so it'll be hard to miss.
     .. automethod:: open_index(index)
 
     .. automethod:: optimize(index=None[, other kwargs listed below])
+
+    .. automethod:: percolate(index, doc_type, doc[, other kwargs listed below])
 
     .. automethod:: put_mapping(index, doc_type, mapping[, other kwargs listed below])
 
