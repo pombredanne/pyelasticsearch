@@ -1,7 +1,17 @@
 Changelog
 =========
 
-v0.6 (unreleased)
+v0.6.1 (2013-11-01)
+-------------------
+
+* Update package requirements to allow requests 2.0, which is in fact
+  compatible. (Natim)
+* Properly raise ``IndexAlreadyExistsException`` even if the error is reported
+  by a node other than the one to which the client is directly connected.
+  (Jannis Leidel)
+
+
+v0.6 (2013-07-23)
 -----------------
 
 .. warning::
@@ -14,11 +24,12 @@ v0.6 (unreleased)
   ``index()`` kwarg.
 
 * ``bulk_index()`` now overwrites any existing doc of the same ID and doctype.
-  Before, it did nothing at all if a document already existed, probably much to
-  your surprise. (We removed the ``'op_type': 'create'`` pair, whose intentions
-  were always mysterious.) (Gavin Carothers)
-* Rename the ``force_insert`` kwarg of ``index()`` to ``only_if_absent``. The
-  old name implied the opposite of what it actually did. (Gavin Carothers)
+  Before, in certain versions of ES (like 0.90RC2), it did nothing at all if a
+  document already existed, probably much to your surprise. (We removed the
+  ``'op_type': 'create'`` pair, whose intentions were always mysterious.)
+  (Gavin Carothers)
+* Rename the ``force_insert`` kwarg of ``index()`` to ``overwrite_existing``.
+  The old name implied the opposite of what it actually did. (Gavin Carothers)
 
 
 v0.5 (2013-04-20)
