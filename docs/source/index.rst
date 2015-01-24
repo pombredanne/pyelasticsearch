@@ -11,6 +11,8 @@ provides features like...
 * Failed-node marking to avoid downed nodes for a period
 * Optional automatic retrying of failed requests
 
+For more on our philosophy and history, see :doc:`elasticsearch-py`.
+
 
 A Taste of the API
 ------------------
@@ -116,6 +118,7 @@ Contents
 
    features
    api
+   elasticsearch-py
    migrate
    changelog
    dev
@@ -127,4 +130,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-

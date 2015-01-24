@@ -1,6 +1,56 @@
 Changelog
 =========
 
+v1.0 (2015-01-23)
+-----------------
+
+* Switch to elasticsearch-py's transport and downtime-pooling machinery,
+  much of which was borrowed from us anyway.
+* Make bulk indexing (and likely other network things) 15 times faster.
+* Add a comparison with the official client to the docs.
+* Fix ``delete_by_query()`` to work with ES 1.0 and later.
+* Bring ``percolate()`` es_kwargs up to date.
+* Fix all tests that were failing on modern versions of ES.
+* Tolerate errors that are non-strings and create exceptions for them properly.
+
+.. note::
+
+  Backward incompatible:
+
+  * Drop compatibility with elasticsearch < 1.0.
+  * Redo ``cluster_state()`` to work with ES 1.0 and later. Arguments have
+    changed.
+  * InvalidJsonResponseError no longer provides access to the HTTP response
+    (in the ``response`` property): just the bad data (the ``input`` property).
+  * Change from the logger "pyelasticsearch" to "elasticsearch.trace".
+  * Remove ``revival_delay`` param from ElasticSearch object.
+  * Remove ``encode_body`` param from ``send_request()``. Now all dicts are
+    JSON-encoded, and all strings are left alone.
+
+
+v0.7.1 (2014-08-12)
+-------------------
+
+* Brings tests up to date with ``update_aliases()`` API change.
+
+
+v0.7 (2014-08-12)
+-----------------
+
+* When an ``id_field`` is specified for ``bulk_index()``, don't index it under
+  its original name as well; use it only as the ``_id``.
+* Rename ``aliases()`` to ``get_aliases()`` for consistency with other
+  methods. Original name still works but is deprecated. Add an ``alias`` kwarg
+  to the method so you can fetch specific aliases.
+
+.. note::
+
+  Backward incompatible:
+
+  * ``update_aliases()`` no longer requires a dict with an ``actions`` key;
+    that much is implied. Just pass the value of that key.
+
+
 v0.6.1 (2013-11-01)
 -------------------
 
@@ -14,7 +64,7 @@ v0.6.1 (2013-11-01)
 v0.6 (2013-07-23)
 -----------------
 
-.. warning::
+.. note::
 
   Note the change in behavior of ``bulk_index()`` in this release. This change
   probably brings it more in line with your expectations. But double check,
@@ -108,7 +158,7 @@ Many thanks to Erik Rose for almost completely rewriting the API to follow
 best practices, improve the API user experience, and make pyelasticsearch
 future-proof.
 
-.. warning::
+.. note::
 
   This release is **backward-incompatible** in numerous ways, please
   read the following section carefully. If in doubt, you can easily stick

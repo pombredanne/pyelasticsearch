@@ -25,3 +25,4 @@ class ElasticSearchTestCase(unittest.TestCase):
     def assert_result_contains(self, result, expected):
         for (key, value) in expected.items():
             eq_(value, result[key])
+        return True

@@ -50,20 +50,18 @@ setup(
         'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
+        # simplejson doesn't support 3.1 or 3.2.
         'Programming Language :: Python :: 3.3',
+        'Programming Language :: Python :: 3.4',
         'Topic :: Internet :: WWW/HTTP :: Indexing/Search'
     ],
-    requires=[  # Needed?
-        'six',
-        'requests(>=1.0,<3.0)',
-        'simplejson(>=2.1.0)',
-    ],
     install_requires=[
-        'requests>=1.0,<3.0',
-        'simplejson>=2.1.0',
-        'six'
+        'elasticsearch>=1.0.0,<2.0.0',
+        'urllib3>=1.8,<2.0',
+        'simplejson>=3.0',
+        'six>=1.4.0,<2.0'
     ],
     tests_require=['mock', 'nose>=1.2.1'],
     test_suite='nose.collector',
-    url='http://github.com/rhec/pyelasticsearch'
+    url='http://github.com/pyelasticsearch/pyelasticsearch'
 )

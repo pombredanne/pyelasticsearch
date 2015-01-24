@@ -1,32 +1,24 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 
-from datetime import datetime
 from operator import itemgetter
 from functools import wraps
-from logging import getLogger
 import re
 from six import (iterkeys, binary_type, text_type, string_types, integer_types,
                  iteritems, PY3)
 from six.moves import xrange
+from six.moves.urllib.parse import urlparse, urlencode, quote_plus
 
-try:
-    # PY3
-    from urllib.parse import urlencode, quote_plus
-except ImportError:
-    # PY2
-    from urllib import urlencode, quote_plus
-
-import requests
+from elasticsearch.connection_pool import RandomSelector
+from elasticsearch.exceptions import (ConnectionError, ConnectionTimeout,
+                                      TransportError, SerializationError)
+from elasticsearch.transport import Transport
 import simplejson as json  # for use_decimal
-from simplejson import JSONDecodeError
 
-from pyelasticsearch.downtime import DowntimePronePool
-from pyelasticsearch.exceptions import (Timeout, ConnectionError,
-                                        ElasticHttpError,
-                                        InvalidJsonResponseError,
+from pyelasticsearch.exceptions import (ElasticHttpError,
                                         ElasticHttpNotFoundError,
-                                        IndexAlreadyExistsError)
+                                        IndexAlreadyExistsError,
+                                        InvalidJsonResponseError)
 
 
 def _add_es_kwarg_docs(params, method):
@@ -106,7 +98,7 @@ class ElasticSearch(object):
     This object is thread-safe. You can create one instance and share it
     among all threads.
     """
-    def __init__(self, urls, timeout=60, max_retries=0, revival_delay=300):
+    def __init__(self, urls, timeout=60, max_retries=0):
         """
         :arg urls: A URL or iterable of URLs of ES nodes. These are full URLs
             with port numbers, like ``http://elasticsearch.example.com:9200``.
@@ -114,19 +106,24 @@ class ElasticSearch(object):
             Timeout
         :arg max_retries: How many other servers to try, in series, after a
             request times out or a connection fails
-        :arg revival_delay: Number of seconds for which to avoid a server after
-            it times out or is uncontactable
         """
         if isinstance(urls, string_types):
             urls = [urls]
         urls = [u.rstrip('/') for u in urls]
-        self.servers = DowntimePronePool(urls, revival_delay)
-        self.revival_delay = revival_delay
-        self.timeout = timeout
-        self.max_retries = max_retries
-        self.logger = getLogger('pyelasticsearch')
-        self.session = requests.session()
         self.json_encoder = JsonEncoder
+
+        # Automatic node sniffing is off for now.
+        parsed_urls = (urlparse(url) for url in urls)
+        self._transport = Transport(
+            [{'host': url.hostname,
+              'port': url.port or 9200,
+              'http_auth': (url.username, url.password) if
+                           url.username or url.password else None}
+             for url in parsed_urls],
+            max_retries=max_retries,
+            retry_on_timeout=True,
+            timeout=timeout,
+            selector_class=RandomSelector)
 
     def _concat(self, items):
         """
@@ -190,8 +187,7 @@ class ElasticSearch(object):
                      method,
                      path_components,
                      body='',
-                     query_params=None,
-                     encode_body=True):
+                     query_params=None):
         """
         Send an HTTP request to ES, and return the JSON-decoded response.
 
@@ -201,86 +197,63 @@ class ElasticSearch(object):
         and retrying.
 
         Retry the request on different servers if the first one is down and
-        ``self.max_retries`` > 0.
+        the ``max_retries`` constructor arg was > 0.
+
+        On failure, raise an
+        :class:`~pyelasticsearch.exceptions.ElasticHttpError`, a
+        :class:`~pyelasticsearch.exceptions.ConnectionError`, or a
+        :class:`~pyelasticsearch.exceptions.Timeout`.
 
         :arg method: An HTTP method, like "GET"
         :arg path_components: An iterable of path components, to be joined by
             "/"
-        :arg body: The request body
+        :arg body: A map of key/value pairs to be sent as the JSON request
+            body. Alternatively, a string to be sent verbatim, without further
+            JSON encoding.
         :arg query_params: A map of querystring param names to values or
             ``None``
-        :arg encode_body: Whether to encode the body of the request as JSON
         """
         path = self._join_path(path_components)
-        if query_params:
-            path = '?'.join(
-                [path,
-                 urlencode(dict((k, self._utf8(self._to_query(v))) for k, v in
-                                iteritems(query_params)))])
 
-        request_body = self._encode_json(body) if encode_body else body
-        req_method = getattr(self.session, method.lower())
+        # We wrap to use pyelasticsearch's exception hierarchy for backward
+        # compatibility:
+        try:
+            # This implicitly converts dicts to JSON. Strings are left alone:
+            _, prepped_response = self._transport.perform_request(
+                method,
+                path,
+                params=dict((k, self._utf8(self._to_query(v)))
+                            for k, v in iteritems(query_params)),
+                body=body)
+        except SerializationError as exc:
+            raise InvalidJsonResponseError(exc.args[0])
+        except (ConnectionError, ConnectionTimeout) as exc:
+            # Pull the urllib3-native exception out, and raise it:
+            raise exc.info
+        except TransportError as exc:
+            status = exc.args[0]
+            error_message = exc.args[1]
+            self._raise_exception(status, error_message)
 
-        # We do our own retrying rather than using urllib3's; we want to retry
-        # a different node in the cluster if possible, not the same one again
-        # (which may be down).
-        for attempt in xrange(self.max_retries + 1):
-            server_url, was_dead = self.servers.get()
-            url = server_url + path
-            self.logger.debug(
-                "Making a request equivalent to this: curl -X%s '%s' -d '%s'",
-                method, url, request_body)
-
-            try:
-                resp = req_method(
-                    url,
-                    timeout=self.timeout,
-                    **({'data': request_body} if body else {}))
-            except (ConnectionError, Timeout):
-                self.servers.mark_dead(server_url)
-                self.logger.info('%s marked as dead for %s seconds.',
-                                 server_url,
-                                 self.revival_delay)
-                if attempt >= self.max_retries:
-                    raise
-            else:
-                if was_dead:
-                    self.servers.mark_live(server_url)
-                break
-
-        self.logger.debug('response status: %s', resp.status_code)
-        prepped_response = self._decode_response(resp)
-        if resp.status_code >= 400:
-            self._raise_exception(resp, prepped_response)
-        self.logger.debug('got response %s', prepped_response)
         return prepped_response
 
-    def _raise_exception(self, response, decoded_body):
+    def _raise_exception(self, status, error_message):
         """Raise an exception based on an error-indicating response from ES."""
-        error_message = decoded_body.get('error', decoded_body)
-
         error_class = ElasticHttpError
-        if response.status_code == 404:
+        if status == 404:
             error_class = ElasticHttpNotFoundError
-        elif (error_message.startswith('IndexAlreadyExistsException') or
-              'nested: IndexAlreadyExistsException' in error_message):
+        elif (hasattr(error_message, 'startswith') and
+              (error_message.startswith('IndexAlreadyExistsException') or
+               'nested: IndexAlreadyExistsException' in error_message)):
             error_class = IndexAlreadyExistsError
 
-        raise error_class(response.status_code, error_message)
+        raise error_class(status, error_message)
 
     def _encode_json(self, value):
         """
         Convert a Python value to a form suitable for ElasticSearch's JSON DSL.
         """
         return json.dumps(value, cls=self.json_encoder, use_decimal=True)
-
-    def _decode_response(self, response):
-        """Return a native-Python representation of a response's JSON blob."""
-        try:
-            json_response = response.json()
-        except JSONDecodeError:
-            raise InvalidJsonResponseError(response)
-        return json_response
 
     ## REST API
 
@@ -353,7 +326,8 @@ class ElasticSearch(object):
         :arg doc_type: The type of the document
         :arg docs: An iterable of Python mapping objects, convertible to JSON,
             representing documents to index
-        :arg id_field: The field of each document that holds its ID
+        :arg id_field: The field of each document that holds its ID. Removed
+            from document before indexing.
         :arg parent_field: The field of each document that holds its parent ID,
             if any. Removed from document before indexing. 
 
@@ -371,7 +345,7 @@ class ElasticSearch(object):
             action = {'index': {'_index': index, '_type': doc_type}}
 
             if doc.get(id_field) is not None:
-                action['index']['_id'] = doc[id_field]
+                action['index']['_id'] = doc.pop(id_field)
 
             if doc.get(parent_field) is not None:
                 action['index']['_parent'] = doc.pop(parent_field)
@@ -384,7 +358,6 @@ class ElasticSearch(object):
         return self.send_request('POST',
                                  ['_bulk'],
                                  body,
-                                 encode_body=False,
                                  query_params=query_params)
 
     @es_kwargs('routing', 'parent', 'replication', 'consistency', 'refresh')
@@ -450,7 +423,7 @@ class ElasticSearch(object):
             query_params['q'] = query
             body = ''
         else:
-            body = query
+            body = {'query': query}
         return self.send_request(
             'DELETE',
             [self._concat(index), self._concat(doc_type), '_query'],
@@ -705,11 +678,11 @@ class ElasticSearch(object):
                                  query_params=query_params)
 
     @es_kwargs()
-    def update_aliases(self, settings, query_params=None):
+    def update_aliases(self, actions, query_params=None):
         """
-        Add, remove, or update aliases in bulk.
+        Atomically add, remove, or update aliases in bulk.
 
-        :arg settings: a dictionary specifying the actions to perform
+        :arg actions: A list of the actions to perform
 
         See `ES's admin-indices-aliases API`_.
 
@@ -717,22 +690,32 @@ class ElasticSearch(object):
             http://www.elasticsearch.org/guide/reference/api/admin-indices-aliases.html
         """
         return self.send_request('POST', ['_aliases'],
-                                 body=settings, query_params=query_params)
+                                 body={'actions': actions},
+                                 query_params=query_params)
 
-    @es_kwargs()
-    def aliases(self, index=None, query_params=None):
+    @es_kwargs('ignore_unavailable')
+    def get_aliases(self, index=None, alias='*', query_params=None):
         """
         Retrieve a listing of aliases
 
-        :arg index: the name of an index or an iterable of indices
+        :arg index: The name of an index or an iterable of indices from which
+            to fetch aliases. If omitted, look in all indices.
+        :arg alias: The name of the alias to return or an iterable of them.
+            Wildcard * is supported. If this arg is omitted, return all aliases.
 
         See `ES's admin-indices-aliases API`_.
 
         .. _`ES's admin-indices-aliases API`:
             http://www.elasticsearch.org/guide/reference/api/admin-indices-aliases.html
         """
-        return self.send_request('GET', [self._concat(index), '_aliases'],
-                                 query_params=query_params)
+        return self.send_request(
+                'GET',
+                [self._concat(index), '_aliases', self._concat(alias)],
+                 query_params=query_params)
+
+    def aliases(self, *args, **kwargs):
+        # Deprecated.
+        return self.get_aliases(*args, **kwargs)
 
     @es_kwargs()
     def create_index(self, index, settings=None, query_params=None):
@@ -945,14 +928,16 @@ class ElasticSearch(object):
             ['_cluster', 'health', self._concat(index)],
             query_params=query_params)
 
-    @es_kwargs('filter_nodes', 'filter_routing_table', 'filter_metadata',
-               'filter_blocks', 'filter_indices')
-    def cluster_state(self, query_params=None):
+    @es_kwargs('local')
+    def cluster_state(self, metric='_all', index='_all', query_params=None):
         """
-        The cluster state API allows to get comprehensive state
-        information of the whole cluster.
+        Return state information about the cluster.
 
-        (Insert es_kwargs here.)
+        :arg metric: Which metric to return: one of "version", "master_node",
+            "nodes", "routing_table", "meatadata", or "blocks", an iterable
+            of them, or a comma-delimited string of them. Defaults to all
+            metrics.
+        :arg index: An index or iterable of indexes to return info about
 
         See `ES's cluster-state API`_ for more detail.
 
@@ -960,9 +945,12 @@ class ElasticSearch(object):
             http://www.elasticsearch.org/guide/reference/api/admin-cluster-state.html
         """
         return self.send_request(
-            'GET', ['_cluster', 'state'], query_params=query_params)
+            'GET',
+            ['_cluster', 'state', self._concat(metric), self._concat(index)],
+            query_params=query_params)
 
-    @es_kwargs()
+    @es_kwargs('routing', 'preference', 'ignore_unavailable',
+               'percolate_format')
     def percolate(self, index, doc_type, doc, query_params=None):
         """
         Run a JSON document through the registered percolator queries, and
@@ -982,7 +970,8 @@ class ElasticSearch(object):
         """
         return self.send_request('GET',
                                  [index, doc_type, '_percolate'], 
-                                 doc, query_params=query_params)
+                                 doc,
+                                 query_params=query_params)
 
 
 class JsonEncoder(json.JSONEncoder):
